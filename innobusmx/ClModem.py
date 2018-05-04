@@ -94,12 +94,12 @@ class clQuectel(QtCore.QThread):
                         self.setupModem()
                 time.sleep(1)
             except:
-                exc_type, exc_obj, exc_tb = sys.exc_info()
-                fname = os.path.split(exc_tb.tb_frame.f_code.co_filename)[1]
-                    #self.printDebug(sys.exc_info()[1], fname, exc_tb.tb_lineno)
-                file=open("innobusmx/innobus.log","a")
-                file.write('l,'+str(self.clDB.idTransportista)+','+str(self.clDB.idUnidad)+','+str(time.strftime("%Y-")+time.strftime("%m")+time.strftime("-%d %H:%M:%S"))+","+str(sys.exc_info()[1])+","+str(fname)+","+str(exc_tb.tb_lineno)+"\n")
-                file.close()
+                  exc_type, exc_obj, exc_tb = sys.exc_info()
+##                fname = os.path.split(exc_tb.tb_frame.f_code.co_filename)[1]
+##                    #self.printDebug(sys.exc_info()[1], fname, exc_tb.tb_lineno)
+##                file=open("innobusmx/innobus.log","a")
+##                file.write('l,'+str(self.clDB.idTransportista)+','+str(self.clDB.idUnidad)+','+str(time.strftime("%Y-")+time.strftime("%m")+time.strftime("-%d %H:%M:%S"))+","+str(sys.exc_info()[1])+","+str(fname)+","+str(exc_tb.tb_lineno)+"\n")
+##                file.close()
             #    self.run()  
 
 

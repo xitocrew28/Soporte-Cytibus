@@ -507,7 +507,7 @@ def main():
 
 
 
-
+    
     #clStatus = Status(ex)
     #clStatus.start()
 
@@ -520,7 +520,7 @@ def main():
 
 
     clmifare = clMifare(ex, cldb, clserial, clmodem)
-    clmifare.start()
+    #clmifare.start()
 
     clscreen = Screen(ex)
     #clscreen.start()
