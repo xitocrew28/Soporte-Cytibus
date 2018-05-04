@@ -1,0 +1,382 @@
+#!/usr/bin/python
+# -*- coding: utf-8 -*-
+
+from PyQt4 import QtGui
+from PyQt4 import QtCore
+import serial
+import time
+import os 
+
+class clQuectel(QtCore.QThread):
+    idCons = 0
+    
+    def __init__(self, parent, clserial, clDB):
+        self.idCons = 0
+        QtCore.QThread.__init__(self)
+        self.parent = parent
+        self.clDB = clDB
+        self.ser = serial.Serial(clserial.sPort3G, clserial.velocidad, timeout=5)        
+        self.flG = False
+        self.flR = True
+        paso = 0
+
+    def write(self, cmd, answer):
+        print "Tx >>>> ",cmd
+	stRead = ""
+	self.ser.write(cmd.encode())
+	find = False
+	while not find:
+            stRead += str(self.ser.read(1))
+            for  j in answer:
+                if ( stRead.find(j) != -1):
+                    print "Find: " + j
+                    find = True
+                    break
+        print 
+        return stRead
+
+    def run(self):
+        print '#############################################'
+        print '### Iniciando el modulo de comunicaciones ###'
+        print '###                v0.02                  ###'
+        print '#############################################'       
+
+	print '###           Reiniciando MODEM           ###'
+        self.write('AT+QPOWD=1\r',("RDY","RDY"))
+	self.write('ATE0\r',("OK","OK"))
+        time.sleep(5)
+        ini = ''
+        self.inicializaGPS()
+        self.validaSIM()
+        self.inicializa3G()
+        self.inicializaTCP()
+        self.inicializaSMS()
+        self.syncFecha()
+        print '#############################################'
+
+    def validaSIM(self):
+        print '### VALIDAR MODULO SIM                    ###'
+        stRead = self.write("AT+CPIN?\r",("OK","+CME ERROR"))
+        #print "CPIN? "+stRead
+        if(stRead.find("OK") != -1):
+            print '###                         MODULO SIM OK ###'
+            print '### VALIDAR REGISTRO SIM                  ###'
+            stRead = self.write("AT+CREG?\r",("OK","+CME ERROR"))
+            #print "CREG? "+stRead
+            if(stRead.find("+CREG: 0,1") != -1):
+                print '###                    REGISTRO EN RED OK ###'
+            else:
+                print '###              FALLO DE REGISTRO EN RED ###'
+	else:
+            print '###                  ERROR EN TARJETA SIM ###'
+
+
+    def inicializaGPS(self):
+        print '### Iniciando GPS                         ###'
+        stRead = self.write("AT+QGPS=1\r",("OK\r", "+CME ERROR"))
+        #print "QGPS: "+stRead
+        if (stRead.find("OK") != -1):
+            print '###                                GPS OK ###'
+            self.parent.flGPSOK = True
+	else:
+            if (stRead.find("504") != -1):
+                print '###                             El GPS ON ###'
+                self.parent.flGPSOK = True
+            else:
+                print '                          ERROR EN EL GPS ###'
+                #print '###       GPS: '+stRead
+                self.parent.flGPSOK = False
+
+    def inicializaSMS(self):
+        print '###                                       ###'
+        print '### Configuracion SMS                     ###'
+        stRead = self.write("AT+CMGF=1\r",("OK", "ERROR"))
+        #print "CMGF: "+stRead
+        if(stRead.find("OK") != -1):
+            print '###                         MODULO SMS OK ###'
+	else:
+            print '###                   ERROR en Modulo SMS ###'
+
+
+    def inicializa3G(self):
+        statusPDP = 0
+	print '###       INICIANDO CONEXION 3G           ###'
+	print '### CONFIGURACION HTTP                    ###'
+        stRead = self.write("AT+QHTTPCFG=\"contextid\",1\r", ("OK", "ERROR"))
+        #print "AT+QHTTPCFG: "+stRead
+        if (stRead.find("OK") == -1):
+            print '###              FALLO AL CONFIGURAR HTTP ###'
+        else:
+            print '###                 CONFIGURACION HTTP OK ###'
+            print '### VERIFICAR CONEXION PDP                ###'
+            stRead = self.write("AT+QIACT?\r", ("OK","ERROR"))
+            #print "AT+QIACT?: "+stRead
+            if (stRead.find("ERROR") != -1):
+                print '###            ERROR EN ACTIVACION DE PDP ###'
+            elif (stRead.find("+QIACT: 1,1,1") != -1):
+                print '                        Conx PDP Conf Ant ###'
+                statusPDP = 2
+            else:
+                print '### CONFIGURAR PDP                        ###'
+                #print '### Conectandome a la red 3G del provedor ###'
+                cmd =   'AT+QICSGP=1,1,"%s","%s","%s",1\r' % (self.clDB.proveedorInternet, self.clDB.usuarioProveedor, self.clDB.passProveedor)
+                stRead = self.write(cmd, ("OK", "ERROR"))
+                #self.ser.write(cmd.encode())
+            	#stRead = ""
+                #while (stRead.find("OK") == -1 and stRead.find("ERROR") == -1):
+                #    stRead += str(self.ser.readline())
+                #print "QICSGP: "+stRead
+                stRead = " ".join(stRead.split())
+                if (stRead.find("OK") == -1):
+                    print '###               FALLO AL CONFIGURAR PDP ###'
+                else:
+                    print '###                  CONFIGURACION PDP OK ###'	    
+                    stRead = self.write('AT+QIACT=1\r', ("OK", "ERROR"))
+                    #self.ser.write(cmd.encode())
+                    #stRead = ""
+                    #while (stRead.find("OK") == -1 and stRead.find("ERROR") == -1):
+                    #    stRead += str(self.ser.readline())
+                    #print "AT+QIACT=1: "+stRead
+                    if (stRead.find("OK") == -1):
+                        print '###                  FALLO AL ACTIVAR PDP ###'
+                    else:
+                        print '###                     ACTIVACION PDP OK ###'
+
+    def inicializaTCP(self):	
+        #cmd =  'AT+QIOPEN=1,0,"TCP","innovaslp.dyndns.org",11000,0,0\r' 
+        cmd =  'AT+QIOPEN=1,0,"TCP","%s",%s,0,0\r' % (self.clDB.urlSocket, self.clDB.puertoSocket)
+        stRead = self.write(cmd, ("QIOPEN: 0,0", "QIOPEN: 0,5", "ERROR"))
+        #self.ser.write(cmd.encode())
+        #stRead = ""
+        #while (stRead.find("QIOPEN:") == -1 and stRead.find("ERROR") == -1):
+        #    stRead += str(self.ser.readline())
+        print "QIOPEN: "+stRead
+        print '### CONEXION TCP                          ###'
+        self.parent.flRedOK = True
+        if(stRead.find("QIOPEN: 0,0") != -1):
+            print '###                       CONEXION TCP OK ###'
+            self.parent.flRedOK = True
+        else:
+            if(stRead.find('562') != -1):
+                print '###                           TCP ABIERTA ###'
+            else:
+                self.parent.flRed = False
+                print '###                             ERROR TCP ###'
+
+
+    def reInicializa3G(self):
+        print '###           Desactivando conexion        ###'
+        stRead = self.write('AT+QIDEACT=1\r', ("OK", "ERROR"))
+        #self.ser.write(cmd.encode())
+        #stRead = ""
+        #while (stRead[-2:] != "OK") and (stRead[-5:] != "ERROR"):
+        #    stRead += str(self.ser.read(1))
+        #print "QIDEACT: "+stRead
+
+        if (stRead[-2:] != "OK"):
+            print '###           Reiniciando MODEM          ###'
+            self.write('AT+QPOWD=1\r',("RDY", "RDY"))
+            #self.ser.write(cmd.encode())
+            #stRead = ""
+            #while (stRead[-3:] != "RDY"):
+            #    stRead += str(self.ser.read(1))
+            #print "AT+QRST: " +stRead
+
+        self.inicializa3G()
+            
+
+    def sendData(self, data):
+        result = ""
+        senial = 0
+        stRead = self.write('AT+CSQ\r', ("OK", "ERROR"))
+        #self.ser.write(cmd.encode())
+        #stRead = ""
+        #while (stRead.find("OK") == -1 and stRead.find("ERROR") == -1):
+        #    stRead += str(self.ser.readline())
+        #print "CSQ: "+stRead
+        if (stRead.find("OK") != -1):
+            i = stRead.find("+CSQ:")
+            if (i != -1):
+                try:
+                    senial = int(stRead[i+5:i+8])
+                except:
+                    print "Error: Casting int() SignalQuality.", stRead[i+5:i+8]
+                #print "Senial (",stRead[i+5:i+8],")",senial
+                if senial > 5 and senial  != 99:
+                    stRead = self.write('AT+QISEND=0\r', ("ERROR", "OK", '>')) 
+                    #self.ser.write(cmd.encode())
+                    #stRead = ""
+                    #while (stRead.find("ERROR") == -1 and stRead.find("OK") == -1 and stRead.find('>') == -1):
+                    #    stRead += str(self.ser.readline())
+                    #print "QISEND (Hora): "+stRead
+                    if (stRead.find(">") != -1):
+                        cmd = data+"\r\x1A\r"
+                        stRead = self.write(cmd,('recv', 'ERROR', 'closed'))
+                        #self.ser.write(cmd.encode())
+                        #stRead = ""
+                        #i = 0
+                        #while (i < 5) and (stRead.find('recv') == -1) and (stRead.find('ERROR') == -1) and (stRead.find('closed') == -1):
+                        #    st = str(self.ser.readline())
+                        #    if (st != ""):
+                        #        stRead += st
+                        #    else:
+                        #        i += 1
+                        #print "send : (" + str(i) + ")" + stRead
+                        if (stRead.find('"recv",0') != -1):
+                            result = self.write('AT+QIRD=0\r', ("OK", "ERROR"))
+                            #self.ser.write(cmd.encode())
+                            #stRead = ""
+                            #while (stRead.find('OK') == -1) and (stRead.find('ERROR') == -1):
+                            #    stRead += str(self.ser.readline())
+                            #result = stRead
+                            #print "Result: ", result
+        return result
+        
+
+    def syncFecha(self):
+        print '###   Sincronizando fecha con Servidor    ###'
+        i = 0
+        fecha = self.sendData("00")
+        if (fecha != ""):
+            fecha = " ".join(fecha.split()) #se le aplica un split al mismo comando
+            fecha = fecha.split(' ')
+            #print "fecha: ",fecha
+            stRead = "\""+fecha[2]+' '+fecha[3]+"\""
+            print '###   Fecha '+stRead+'         ###'
+            comando = 'sudo date --set %s'%str(stRead)
+            os.system(comando)
+            self.parent.flRed = True
+            self.parent.flFecha = True
+            self.clDB.insertBitacora(stRead)
+
+
+      
+    def runner(self):
+        #print "Obtener coordenada GPS"
+        '''
+        self.obtenerCoordenadaGPS()
+        if (self.parent.flGPSOK):
+            if (self.flG):
+                if (self.parent.flGPS):
+                    self.parent.noGPS.setPixmap(QtGui.QPixmap("/home/pi/innobusmx/data/img/GPS.png"))
+                else:
+                    self.parent.noGPS.setPixmap(QtGui.QPixmap("/home/pi/innobusmx/data/img/noGPS.png"))
+                self.flG = False
+            else:
+                self.parent.noGPS.setPixmap(QtGui.QPixmap(""))
+                self.flG = True
+
+        if (self.parent.flRedOK):
+            if (self.flR):
+                if (self.parent.flRed):
+                    self.parent.noRed.setPixmap(QtGui.QPixmap("/home/pi/innobusmx/data/img/3G.png"))
+                else:
+                    self.parent.noRed.setPixmap(QtGui.QPixmap("/home/pi/innobusmx/data/img/no3G.png"))
+                    self.inicializa3G() 
+                self.flR = False
+            else:
+                self.parent.noRed.setPixmap(QtGui.QPixmap(""))
+                self.flR = True
+        else:
+            self.reInicializa3G() 
+        QtCore.QTimer.singleShot(1000, self.seguir)
+        '''
+
+###class inicioGPS(QtCore.QThread):
+    
+#    def __init__(self, parent, obj, flGPS, noGPS):
+###    def __init__(self, parent, ser, flGPS, noGPS):
+###        qtcore.QThread.__init__(self)
+###        self.parent = parent
+###        self.noGPS = noGPS
+###        self.ser = ser
+
+    def obtenerCoordenadaGPS(self):
+        global idTransportista
+        global idUnidad
+        global idCons
+        '''
+            ##############################################################
+                Modulo que obteniene la coordenada GPS la guarda cuando
+                el GPS se establece de manera correcta.
+            ##############################################################
+        '''
+        #self.parent.noGPS.setPixmap(QtGui.QPixmap(""))
+        #self.parent.lblMsg.setText("o")
+        cmd = 'AT+QGPSLOC=0\r' 
+        self.ser.write(cmd.encode())
+        stRead = ""
+        while (stRead.find("OK") == -1) and (stRead.find("ERROR") == -1) and (stRead.find('closed') == -1):
+            stRead += str(self.ser.readline())
+        #print "QGPSLOC: "+stRead
+        #self.parent.lblMsg1.setText("QGPSLOC: "+stRead)
+        #time.sleep(2)
+        self.parent.flGPS = (stRead.find("OK") != -1)
+        if(self.parent.flGPS):
+                self.parent.flGPS = True
+                self.parent.flComm = True
+#            try:
+#                self.noGPS.setPixmap(QtGui.QPixmap(""))
+		stRead = " ".join(stRead.split()) #se le aplica un split al mismo comando
+		my_list = stRead.split(",")
+                # 0 Hora  (hh-mm-ss)
+		# 1 latitud
+		# 2 longitud
+                # 7 velocidad
+                # 9 Fecha (dd-mm-aa)
+                if (len(my_list) == 11):
+                    hora = my_list[0][10:12] + ":" + my_list[0][12:14] + ":" + my_list[0][14:16]
+                    latitud = my_list[1][0:-1]
+                    if (my_list[1][-1:] == 'S'):
+                        latitud = '-' + latitud
+                    longitud = my_list[2][0:-1]
+                    velGPS = my_list[7]
+                    fecha = my_list[9][0:2] + "-" + my_list[9][2:4] + "-20" + my_list[9][4:6]
+                    idInser = my_list[9][4:6]+my_list[0][23:29]
+                    l = float(latitud[0:2]) + (float(latitud[2:])/60)
+                    latitud = ("%.6f" % l)
+                    l = float(longitud[0:3]) + (float(longitud[3:])/60)
+                    longitud = ("%.6f" % l)
+                    if (my_list[2][-1:] == 'W'):
+                        longitud = '-' + longitud
+                    print '###         Dato valido insertandolo      ###'
+                    #print "Connect insertando dato GPS"  
+                    idCons += 1
+                    #print "Insert GPS"
+                    connT.execute('insert into tgps (hora, latitud, longitud, fecha, velocidad,idPos,enviado, idCons) values (?, ?, ?, ?, ?, ?, 0, ?)', (hora, latitud, longitud, fecha, velGPS, idInser, idCons))
+                    #print "commit insertando dato GPS"  
+                    connT.commit()
+                    self.parent.lblVelocidad.setText(str(velGPS))
+                    if (self.parent.flComm):
+                        datetimes = fecha + ' ' + hora
+                        gpr = '1,'+str(idTransportista)+','+str(idUnidad)+','+str(datetimes)+','+str(latitud)+','+str(longitud)+','+str(velGPS)+','+str(idCons)+'\r'+''
+                        #print "GPS (envio) " + gpr
+                        self.parent.procesoDeEnvio(gpr, idInser, 1, 0)
+                else:
+                    print "###              Error> Lista mal formada ### "
+ #           except:
+ #                print '###   GPS fallo el parseo del dato   ###'
+        else:
+            if (stRead.find('closed') != -1):
+                self.flRedOK = False
+                self.flRed = False
+                print '###           Error no existe conexion 3G ###'                
+            else:
+                velGPS = 0
+                self.parent.lblVelocidad.setText("-")
+                self.parent.flGPS = False
+                print '###         Error al obtener Posicion GPS ###'                
+        if (self.parent.flComm):
+            c = connT.cursor()
+            c.execute('SELECT hora, latitud, longitud, fecha, velocidad, idPos, enviado, idCons FROM tgps LIMIT 1')
+            data = c.fetchone()
+            if data is None:
+                print 'No hay datos GPS por enviar'
+            else:
+                print data[7] , " !=" , idCons
+                if (data[7] != idCons) :
+                    gpr = '1,'+str(idTransportista)+','+str(idUnidad)+','+str(data[3])+' '+str(data[0])+','+str(data[1])+','+str(data[2])+','+str(data[4])+','+str(data[7])+'\r'+''
+                    print "GPS (envio 2) " + gpr
+                    self.parent.procesoDeEnvio(gpr, data[5], 1, 0)
+            c.close()
+            c = None 
